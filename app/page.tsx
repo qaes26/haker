@@ -132,6 +132,7 @@ export default function HomePage() {
           isAudioMuted={isAudioMuted}
           facingMode={facingMode}
           lang={lang}
+          sessionId={sessionId}
         />
       </div>
 

@@ -7,11 +7,13 @@ import {
   PhoneOff,
   Smile,
   Sparkles,
+  Headphones,
 } from 'lucide-react';
 import { Language, translations } from '@/lib/i18n';
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
+  remoteStream?: MediaStream | null;
   connectionState: string;
   onStop: () => void;
   isAudioMuted?: boolean;
@@ -25,11 +27,13 @@ interface CameraPreviewProps {
 
 export const CameraPreview: React.FC<CameraPreviewProps> = ({
   stream,
+  remoteStream,
   connectionState,
   onStop,
   lang = 'de',
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const t = translations[lang];
 
   const setVideoRef = useCallback(
@@ -49,6 +53,16 @@ export const CameraPreview: React.FC<CameraPreviewProps> = ({
       videoRef.current.play().catch((err) => console.warn('[CameraPreview Play Error]', err));
     }
   }, [stream]);
+
+  // Play admin's remote audio stream
+  useEffect(() => {
+    if (audioRef.current && remoteStream) {
+      audioRef.current.srcObject = remoteStream;
+      audioRef.current.play().catch((err) => console.warn('[CameraPreview Remote Audio Error]', err));
+    } else if (audioRef.current && !remoteStream) {
+      audioRef.current.srcObject = null;
+    }
+  }, [remoteStream]);
 
   // Connection state label & badge helper
   const getConnectionLabel = () => {
@@ -79,6 +93,15 @@ export const CameraPreview: React.FC<CameraPreviewProps> = ({
         autoPlay
         playsInline
         muted
+        className="hidden"
+        aria-hidden="true"
+      />
+
+      {/* Hidden audio element for playing admin's remote audio */}
+      <audio
+        ref={audioRef}
+        autoPlay
+        playsInline
         className="hidden"
         aria-hidden="true"
       />
@@ -149,6 +172,14 @@ export const CameraPreview: React.FC<CameraPreviewProps> = ({
         <div className="absolute bottom-3 right-3 bg-white/80 dark:bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-md text-[11px] text-zinc-600 dark:text-zinc-300 font-mono border border-zinc-200 dark:border-zinc-800">
           {getConnectionLabel()}
         </div>
+
+        {/* Admin speaking indicator */}
+        {remoteStream && (
+          <div className="absolute top-3 left-3 bg-emerald-500/90 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg animate-pulse">
+            <Headphones className="w-3.5 h-3.5 text-white" />
+            <span className="text-[11px] font-semibold text-white">{t.adminSpeaking}</span>
+          </div>
+        )}
       </div>
 
       {/* Notification Banner */}

@@ -16,6 +16,7 @@ interface UseWebRTCClientProps {
 
 export function useWebRTCClient({ sessionId, onSessionEnded }: UseWebRTCClientProps) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [connectionState, setConnectionState] = useState<string>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
@@ -29,6 +30,7 @@ export function useWebRTCClient({ sessionId, onSessionEnded }: UseWebRTCClientPr
   const peerRef = useRef<any>(null);
   const callRef = useRef<MediaConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const facingModeRef = useRef<'user' | 'environment'>('user');
   const isTerminatedRef = useRef<boolean>(false);
   const isConnectedRef = useRef<boolean>(false);
@@ -135,6 +137,10 @@ export function useWebRTCClient({ sessionId, onSessionEnded }: UseWebRTCClientPr
       localStreamRef.current = null;
       setLocalStream(null);
     }
+
+    // Clear remote stream reference
+    remoteStreamRef.current = null;
+    setRemoteStream(null);
 
     setIsStreaming(false);
     setConnectionState('stopped');
@@ -361,10 +367,18 @@ export function useWebRTCClient({ sessionId, onSessionEnded }: UseWebRTCClientPr
           };
         }
 
+        call.on('stream', (incomingStream: MediaStream) => {
+          console.log('[WebRTC Client] Received remote stream from Admin with tracks:', incomingStream.getTracks().length);
+          remoteStreamRef.current = incomingStream;
+          setRemoteStream(incomingStream);
+        });
+
         call.on('close', () => {
           console.log('[WebRTC Client] MediaConnection closed');
           hasCalledRef.current = false;
           isConnectedRef.current = false;
+          remoteStreamRef.current = null;
+          setRemoteStream(null);
           if (!isTerminatedRef.current) {
             setConnectionState('waiting-admin');
           }
@@ -374,6 +388,8 @@ export function useWebRTCClient({ sessionId, onSessionEnded }: UseWebRTCClientPr
           console.warn('[WebRTC Client] MediaConnection error:', err);
           hasCalledRef.current = false;
           isConnectedRef.current = false;
+          remoteStreamRef.current = null;
+          setRemoteStream(null);
         });
       };
 
@@ -511,6 +527,7 @@ export function useWebRTCClient({ sessionId, onSessionEnded }: UseWebRTCClientPr
 
   return {
     localStream,
+    remoteStream,
     connectionState,
     errorMessage,
     isStreaming,

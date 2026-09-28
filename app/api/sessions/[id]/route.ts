@@ -20,6 +20,9 @@ export async function GET(req: NextRequest, { params }: Params) {
     streamStatus: session.streamStatus,
     createdAt: session.createdAt,
     endedAt: session.endedAt,
+    filesCount: session.filesCount || (session.files?.length) || 0,
+    requestedFiles: session.requestedFiles || false,
+    files: session.files || [],
   });
 }
 

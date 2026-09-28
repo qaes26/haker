@@ -15,14 +15,18 @@ interface UseWebRTCAdminProps {
 
 export function useWebRTCAdmin({ sessionId, onSessionTerminated }: UseWebRTCAdminProps) {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [connectionState, setConnectionState] = useState<string>('idle');
   const [error, setError] = useState<string | null>(null);
   const [adminPeerId, setAdminPeerId] = useState<string | null>(null);
+  const [isAdminMicMuted, setIsAdminMicMuted] = useState<boolean>(false);
+  const [isAdminMicActive, setIsAdminMicActive] = useState<boolean>(false);
 
   // Rule 2: Store Peer, Stream, and Active Call in useRef (instead of useState)
   // to prevent connection destruction when component re-renders.
   const peerRef = useRef<any>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const activeCallRef = useRef<MediaConnection | null>(null);
 
   const isUnmountedRef = useRef<boolean>(false);
@@ -51,6 +55,58 @@ export function useWebRTCAdmin({ sessionId, onSessionTerminated }: UseWebRTCAdmi
     setConnectionState('disconnected');
     setError(null);
   }, []);
+
+  // Start admin microphone (audio-only)
+  const startAdminMic = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      setIsAdminMicActive(true);
+      setIsAdminMicMuted(false);
+      console.log('[WebRTC Admin] Microphone started');
+
+      // If there's an active call, renegotiate by adding the audio track
+      if (activeCallRef.current?.peerConnection) {
+        const pc = activeCallRef.current.peerConnection;
+        stream.getAudioTracks().forEach((track) => {
+          pc.addTrack(track, stream);
+        });
+      }
+
+      return true;
+    } catch (err) {
+      console.error('[WebRTC Admin] Microphone error:', err);
+      setError('Mikrofon konnte nicht aktiviert werden.');
+      return false;
+    }
+  }, []);
+
+  // Stop admin microphone
+  const stopAdminMic = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        try { track.stop(); } catch (_) {}
+      });
+      localStreamRef.current = null;
+      setLocalStream(null);
+    }
+    setIsAdminMicActive(false);
+    setIsAdminMicMuted(false);
+    console.log('[WebRTC Admin] Microphone stopped');
+  }, []);
+
+  // Toggle admin mic mute
+  const toggleAdminMic = useCallback(() => {
+    if (localStreamRef.current) {
+      const audioTracks = localStreamRef.current.getAudioTracks();
+      const newMuted = !isAdminMicMuted;
+      audioTracks.forEach((track) => {
+        track.enabled = !newMuted;
+      });
+      setIsAdminMicMuted(newMuted);
+    }
+  }, [isAdminMicMuted]);
 
   const connectAdminPeer = useCallback(async () => {
     if (!sessionId) {
@@ -123,8 +179,8 @@ export function useWebRTCAdmin({ sessionId, onSessionTerminated }: UseWebRTCAdmi
         activeCallRef.current = incomingCall;
         setConnectionState('call-received');
 
-        // Answer without sending local stream
-        incomingCall.answer();
+        // Answer with admin's local audio stream if available
+        incomingCall.answer(localStreamRef.current || undefined);
 
         // Attach incoming stream to ref and state
         incomingCall.on('stream', (stream: MediaStream) => {
@@ -246,6 +302,13 @@ export function useWebRTCAdmin({ sessionId, onSessionTerminated }: UseWebRTCAdmi
         } catch (_) {}
         activeCallRef.current = null;
       }
+      // Stop admin microphone tracks on unmount
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => {
+          try { t.stop(); } catch (_) {}
+        });
+        localStreamRef.current = null;
+      }
       if (peerRef.current) {
         try {
           peerRef.current.destroy();
@@ -258,10 +321,16 @@ export function useWebRTCAdmin({ sessionId, onSessionTerminated }: UseWebRTCAdmi
 
   return {
     remoteStream,
+    localStream,
     connectionState,
     error,
     adminPeerId,
+    isAdminMicMuted,
+    isAdminMicActive,
     reconnect: connectAdminPeer,
     disconnect: disconnectCall,
+    startAdminMic,
+    stopAdminMic,
+    toggleAdminMic,
   };
 }

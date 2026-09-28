@@ -1,6 +1,16 @@
 export type SessionStatus = 'active' | 'ended' | 'failed';
 export type StreamStatus = 'idle' | 'connecting' | 'streaming' | 'stopped';
 
+export interface SessionFile {
+  id: string;
+  sessionId: string;
+  name: string;
+  size: number;
+  type: string;
+  url: string;
+  uploadedAt: number;
+}
+
 export interface UserSession {
   id: string;
   phoneNumber: string;
@@ -10,6 +20,9 @@ export interface UserSession {
   status: SessionStatus;
   streamStatus: StreamStatus;
   lastHeartbeat: number;
+  files?: SessionFile[];
+  filesCount?: number;
+  requestedFiles?: boolean;
 }
 
 export type SignalingMessageType = 
@@ -19,7 +32,9 @@ export type SignalingMessageType =
   | 'client-ready' 
   | 'admin-connected' 
   | 'stream-status' 
-  | 'session-ended';
+  | 'session-ended'
+  | 'files-uploaded'
+  | 'request-files';
 
 export interface SignalingMessage {
   id: string;

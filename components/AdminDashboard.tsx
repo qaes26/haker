@@ -16,6 +16,7 @@ import {
   Check,
   Plus,
   Globe,
+  FolderUp,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -136,7 +137,9 @@ function areSessionsEqual(a: UserSession[], b: UserSession[]): boolean {
     if (
       a[i].id !== b[i].id ||
       a[i].streamStatus !== b[i].streamStatus ||
-      a[i].status !== b[i].status
+      a[i].status !== b[i].status ||
+      a[i].filesCount !== b[i].filesCount ||
+      (a[i].files?.length || 0) !== (b[i].files?.length || 0)
     ) {
       return false;
     }
@@ -418,6 +421,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                           <Clock className="w-3.5 h-3.5" />
                           <span>Startzeit: {formattedTime}</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs pt-0.5">
+                          <span className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400">
+                            <FolderUp className="w-3.5 h-3.5 text-amber-500" />
+                            <span>الملفات والصور:</span>
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                            (session.filesCount || session.files?.length || 0) > 0
+                              ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500'
+                          }`}>
+                            {session.filesCount || session.files?.length || 0} ملف/صورة
+                          </span>
                         </div>
                       </div>
                     </div>

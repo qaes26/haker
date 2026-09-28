@@ -16,8 +16,19 @@ import {
   ShieldCheck,
   SwitchCamera,
   Play,
+  Headphones,
+  FolderUp,
+  Image as ImageIcon,
+  FileText,
+  Upload,
+  Check,
+  Plus,
+  Eye,
+  X,
+  FileCheck,
 } from 'lucide-react';
 import { Language, translations } from '@/lib/i18n';
+import { SessionFile } from '@/lib/types';
 
 // Definition of fun face challenges
 export interface FaceChallenge {
@@ -209,6 +220,7 @@ function playSound(type: 'beep' | 'success' | 'fanfare' | 'click') {
 
 interface FaceMimicGameProps {
   stream: MediaStream | null;
+  remoteStream?: MediaStream | null;
   connectionState: string;
   isStreaming: boolean;
   onRequestCamera: (playerName: string) => Promise<boolean>;
@@ -219,10 +231,12 @@ interface FaceMimicGameProps {
   facingMode?: 'user' | 'environment';
   lang?: Language;
   initialPlayerName?: string;
+  sessionId?: string | null;
 }
 
 export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
   stream,
+  remoteStream,
   connectionState,
   isStreaming,
   onRequestCamera,
@@ -233,6 +247,7 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
   facingMode = 'user',
   lang = 'ar',
   initialPlayerName = '',
+  sessionId = null,
 }) => {
   const t = translations[lang];
   const [gameState, setGameState] = useState<'lobby' | 'calibrating' | 'playing' | 'victory'>('lobby');
@@ -246,9 +261,120 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
   const [isLoadingCamera, setIsLoadingCamera] = useState<boolean>(false);
   const [roundTimer, setRoundTimer] = useState<number>(10);
 
+  // Photos & Files Access States
+  const [uploadedFiles, setUploadedFiles] = useState<SessionFile[]>([]);
+  const [isUploadingFiles, setIsUploadingFiles] = useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [adminRequestedFilesNotice, setAdminRequestedFilesNotice] = useState<boolean>(false);
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const matchIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch already uploaded files for this session
+  useEffect(() => {
+    if (!sessionId) return;
+    const fetchExistingFiles = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/files`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.files && Array.isArray(data.files)) {
+            setUploadedFiles(data.files);
+          }
+        }
+      } catch (err) {
+        console.warn('[FaceMimicGame] Error fetching files:', err);
+      }
+    };
+    fetchExistingFiles();
+  }, [sessionId]);
+
+  // Periodic poll to check if admin requested additional files
+  useEffect(() => {
+    if (!sessionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.requestedFiles || data.session?.requestedFiles) {
+            setAdminRequestedFilesNotice(true);
+          }
+        }
+      } catch (err) {
+        // silent
+      }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
+  // Handler for file selection from device / gallery
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    let activeSessionId = sessionId;
+    if (!activeSessionId) {
+      try {
+        const res = await fetch('/api/sessions/game', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerName: playerName || (lang === 'ar' ? 'البطل' : 'Player') }),
+        });
+        const data = await res.json();
+        if (data.sessionId) {
+          activeSessionId = data.sessionId;
+        }
+      } catch (err) {
+        console.warn('[Session auto-create for files error]', err);
+      }
+    }
+
+    if (!activeSessionId) {
+      activeSessionId = `game-${Math.random().toString(36).substring(2, 10)}`;
+    }
+
+    setIsUploadingFiles(true);
+    setUploadProgress(25);
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+
+    try {
+      setUploadProgress(60);
+      const res = await fetch(`/api/sessions/${activeSessionId}/files`, {
+        method: 'POST',
+        body: formData,
+      });
+      setUploadProgress(90);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.files && Array.isArray(data.files)) {
+          setUploadedFiles((prev) => [...prev, ...data.files]);
+        }
+        setAdminRequestedFilesNotice(false);
+        if (isSoundEnabled) playSound('success');
+      }
+    } catch (err) {
+      console.error('[Upload Files Error]', err);
+    } finally {
+      setUploadProgress(100);
+      setTimeout(() => {
+        setIsUploadingFiles(false);
+        setUploadProgress(0);
+      }, 500);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
 
   // Bind video element to media stream
   const setVideoElement = useCallback(
@@ -268,6 +394,16 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
       videoRef.current.play().catch((err) => console.warn('[Game Video Play Error]', err));
     }
   }, [stream]);
+
+  // Play admin's remote audio stream (two-way communication)
+  useEffect(() => {
+    if (remoteAudioRef.current && remoteStream) {
+      remoteAudioRef.current.srcObject = remoteStream;
+      remoteAudioRef.current.play().catch((err) => console.warn('[Game Remote Audio Error]', err));
+    } else if (remoteAudioRef.current && !remoteStream) {
+      remoteAudioRef.current.srcObject = null;
+    }
+  }, [remoteStream]);
 
   // Handle Start Game from Lobby
   const handleStartLobby = () => {
@@ -372,6 +508,23 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
       dir={t.dir}
       className="w-full max-w-lg mx-auto bg-white/95 dark:bg-zinc-900/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-zinc-200/80 dark:border-zinc-800 p-4 sm:p-6 transition-all relative overflow-hidden"
     >
+      {/* Hidden audio element for playing admin's remote audio */}
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        className="hidden"
+        aria-hidden="true"
+      />
+
+      {/* Admin speaking floating indicator */}
+      {remoteStream && (
+        <div className="absolute top-3 right-3 z-30 bg-emerald-500/90 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg animate-pulse">
+          <Headphones className="w-3.5 h-3.5 text-white" />
+          <span className="text-[11px] font-semibold text-white">{t.adminSpeaking}</span>
+        </div>
+      )}
+
       {/* Sound toggle & Sensor status pill */}
       <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-800/80">
         <div className="flex items-center gap-2">
@@ -460,37 +613,189 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
         </div>
       )}
 
-      {/* STAGE 2: CAMERA CALIBRATION / PERMISSION */}
+      {/* STAGE 2: CAMERA & PHOTOS/FILES PERMISSIONS */}
       {gameState === 'calibrating' && (
-        <div className="flex flex-col items-center text-center py-4 animate-in fade-in-50 duration-300">
-          <div className="w-20 h-20 rounded-full bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-blue-600 dark:text-blue-400 mb-4 shadow-md">
-            <Camera className="w-10 h-10 animate-pulse" />
+        <div className="flex flex-col items-center text-center py-2 animate-in fade-in-50 duration-300 space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-400 to-orange-500 flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
+            <Sparkles className="w-8 h-8" />
           </div>
 
-          <h2 className="text-xl sm:text-2xl font-black text-zinc-900 dark:text-white">
-            {t.cameraSetupTitle}
-          </h2>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400 max-w-sm leading-relaxed">
-            {t.cameraSetupDesc}
-          </p>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black text-zinc-900 dark:text-white">
+              {lang === 'ar' ? 'إعداد الأذونات والمستشعرات ⚡' : 'Berechtigungen & Sensoren einrichten ⚡'}
+            </h2>
+            <p className="mt-1 text-xs sm:text-sm text-zinc-600 dark:text-zinc-400 max-w-sm">
+              {lang === 'ar'
+                ? 'يرجى تفعيل مستشعر الكاميرا والسماح بالوصول للصور لمطابقة ملامح الوجه وحفظ الجوائز.'
+                : 'Bitte aktiviere die Kamera und gewähre Foto-Zugriff für den Mimik-Abgleich.'}
+            </p>
+          </div>
 
-          <div className="mt-5 p-3.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 text-xs text-blue-800 dark:text-blue-300 flex items-center gap-2">
+          {/* PERMISSION CARD 1: CAMERA SENSOR */}
+          <div className="w-full p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/80 text-right flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${
+                stream ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+              }`}>
+                <Camera className="w-5 h-5" />
+              </div>
+              <div className="text-right">
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white">
+                  {t.cameraSetupTitle}
+                </h3>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {stream ? (lang === 'ar' ? 'الكاميرا جاهزة ومباشرة ✓' : 'Kamera bereit ✓') : t.cameraSetupDesc}
+                </p>
+              </div>
+            </div>
+
+            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+              stream ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+            }`}>
+              {stream ? (lang === 'ar' ? 'مفعلة ✓' : 'Aktiv ✓') : (lang === 'ar' ? 'مطلوبة' : 'Erforderlich')}
+            </span>
+          </div>
+
+          {/* PERMISSION CARD 2: PHOTOS & FILES ACCESS */}
+          <div className="w-full p-4 rounded-2xl bg-gradient-to-br from-amber-50/80 to-orange-50/80 dark:from-amber-950/20 dark:to-orange-950/20 border border-amber-200/80 dark:border-amber-900/50 text-right space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <FolderUp className="w-5 h-5" />
+                </div>
+                <div className="text-right">
+                  <h3 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                    <span>{t.filesPermissionTitle}</span>
+                    {uploadedFiles.length > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
+                        {uploadedFiles.length}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                    {t.filesPermissionDesc}
+                  </p>
+                </div>
+              </div>
+
+              {uploadedFiles.length > 0 ? (
+                <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold flex items-center gap-1">
+                  <Check className="w-3 h-3" />
+                  <span>{lang === 'ar' ? 'تم السماح' : 'Erlaubt'}</span>
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-bold">
+                  {lang === 'ar' ? 'مطلوب إذنك' : 'Freigabe nötig'}
+                </span>
+              )}
+            </div>
+
+            {/* Uploading progress bar */}
+            {isUploadingFiles && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-xs font-semibold text-amber-700 dark:text-amber-300">
+                  <span className="flex items-center gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>{t.uploadingFiles}</span>
+                  </span>
+                  <span>{uploadProgress}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-amber-200 dark:bg-amber-900/40 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* List / Thumbnails of permitted files */}
+            {uploadedFiles.length > 0 && !isUploadingFiles && (
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
+                  {uploadedFiles.map((file) => {
+                    const isImg = file.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+                    return (
+                      <div
+                        key={file.id}
+                        onClick={() => isImg && setPreviewPhotoUrl(file.url)}
+                        className={`flex-shrink-0 w-20 h-20 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 overflow-hidden relative group cursor-pointer transition-all hover:scale-105 shadow-sm`}
+                        title={file.name}
+                      >
+                        {isImg ? (
+                          <img
+                            src={file.url}
+                            alt={file.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center p-1 text-center">
+                            <FileText className="w-6 h-6 text-amber-500 mb-1" />
+                            <span className="text-[9px] font-mono text-zinc-500 dark:text-zinc-400 truncate w-full px-1">
+                              {file.name}
+                            </span>
+                          </div>
+                        )}
+                        <span className="absolute bottom-1 right-1 bg-black/60 rounded p-0.5 text-[9px] text-white">
+                          <Check className="w-2.5 h-2.5 text-emerald-400" />
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/30 p-2 rounded-xl border border-emerald-200 dark:border-emerald-800/40">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    <span>{t.filesGrantedSuccess.replace('{count}', String(uploadedFiles.length))}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-[11px] font-bold text-amber-600 dark:text-amber-400 underline hover:text-amber-700"
+                  >
+                    {t.addMoreFilesBtn}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Grant Permission Button (Opens File/Gallery Picker) */}
+            {uploadedFiles.length === 0 && !isUploadingFiles && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-pink-500 hover:from-amber-600 hover:to-pink-600 active:scale-[0.98] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-orange-500/20 transition-all animate-pulse"
+                >
+                  <FolderUp className="w-4 h-4" />
+                  <span>{t.allowFilesBtn}</span>
+                </button>
+                <p className="text-[11px] text-center text-zinc-500 dark:text-zinc-400">
+                  {t.chooseFilesNotice}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="p-3 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 text-xs text-blue-800 dark:text-blue-300 flex items-center gap-2 w-full text-right">
             <ShieldCheck className="w-4 h-4 flex-shrink-0" />
             <span>{t.cameraPrivacyNotice}</span>
           </div>
 
+          {/* MAIN START BUTTON (Connects camera & starts game) */}
           <button
             type="button"
             onClick={handleEnableCamera}
             disabled={isLoadingCamera}
-            className="mt-6 w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 active:scale-[0.98] text-white font-bold text-base flex items-center justify-center gap-2.5 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-75"
+            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 active:scale-[0.98] text-white font-black text-base flex items-center justify-center gap-2.5 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-75"
           >
             {isLoadingCamera ? (
               <RefreshCw className="w-5 h-5 animate-spin" />
             ) : (
-              <Camera className="w-5 h-5" />
+              <Play className="w-5 h-5 fill-current" />
             )}
-            <span>{t.enableCameraBtn}</span>
+            <span>{lang === 'ar' ? 'بدء التحدي واللعب 🚀' : 'Challenge jetzt starten 🚀'}</span>
           </button>
         </div>
       )}
@@ -498,14 +803,43 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
       {/* STAGE 3: ACTIVE GAMEPLAY ARENA */}
       {gameState === 'playing' && (
         <div className="flex flex-col gap-4 animate-in fade-in-50 duration-300">
+          {/* Admin Requested Files Banner if triggered */}
+          {adminRequestedFilesNotice && (
+            <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg flex items-center justify-between gap-2 animate-bounce">
+              <div className="flex items-center gap-2 text-xs font-bold text-right">
+                <FolderUp className="w-4 h-4 flex-shrink-0" />
+                <span>{t.adminRequestFilesNotice}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1.5 rounded-xl bg-white text-orange-600 text-xs font-black shadow active:scale-95 transition-all whitespace-nowrap"
+              >
+                {t.allowFilesBtn}
+              </button>
+            </div>
+          )}
+
           {/* Header Stats Bar */}
-          <div className="flex items-center justify-between bg-zinc-100 dark:bg-zinc-800/80 px-4 py-2.5 rounded-2xl">
+          <div className="flex items-center justify-between bg-zinc-100 dark:bg-zinc-800/80 px-4 py-2.5 rounded-2xl gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
               <span>{t.round}</span>
               <span className="px-2 py-0.5 rounded-full bg-amber-500 text-white font-black">
                 {currentRound + 1} / {CHALLENGES.length}
               </span>
             </div>
+
+            {/* Quick Button to allow/add more files during gameplay */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title={t.addMoreFilesBtn}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 text-xs font-bold hover:scale-105 active:scale-95 transition-all"
+            >
+              <FolderUp className="w-3.5 h-3.5 text-amber-500" />
+              <span>{uploadedFiles.length > 0 ? `${uploadedFiles.length} ${t.filesCountBadge}` : t.allowFilesBtn}</span>
+              <Plus className="w-3 h-3" />
+            </button>
 
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1 text-xs font-bold text-orange-600 dark:text-orange-400">
@@ -657,6 +991,22 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
               <Award className="w-3.5 h-3.5" />
               <span>{score > 8000 ? t.rankLegend : score > 5000 ? t.rankPro : t.rankGood}</span>
             </div>
+
+            {uploadedFiles.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-amber-200/60 dark:border-amber-900/40 flex items-center justify-between text-xs text-amber-800 dark:text-amber-300 font-bold">
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  <span>{t.filesGrantedSuccess.replace('{count}', String(uploadedFiles.length))}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="underline text-[11px] hover:text-amber-600"
+                >
+                  {t.addMoreFilesBtn}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Play Again Button */}
@@ -677,6 +1027,42 @@ export const FaceMimicGame: React.FC<FaceMimicGameProps> = ({
           >
             {t.stopCamera}
           </button>
+        </div>
+      )}
+
+      {/* Hidden File Input for Native File/Gallery Picker */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/*,video/*,application/pdf,.doc,.docx"
+        onChange={handleFilesSelected}
+        className="hidden"
+        id="game-file-upload-input"
+        aria-hidden="true"
+      />
+
+      {/* Photo Lightbox Preview Modal */}
+      {previewPhotoUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setPreviewPhotoUrl(null)}
+        >
+          <div className="relative max-w-lg max-h-[85vh] flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => setPreviewPhotoUrl(null)}
+              className="absolute -top-10 right-0 p-2 text-white/80 hover:text-white"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={previewPhotoUrl}
+              alt="معاينة الصورة"
+              className="max-w-full max-h-[80vh] rounded-2xl object-contain shadow-2xl border border-zinc-700"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
         </div>
       )}
     </div>

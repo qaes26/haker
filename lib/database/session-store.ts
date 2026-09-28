@@ -3,10 +3,12 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+export type SessionUpdates = Partial<Pick<UserSession, 'status' | 'streamStatus' | 'files' | 'filesCount' | 'requestedFiles'>>;
+
 export interface ISessionStore {
   create(phoneNumber: string, maskedPhoneNumber: string): Promise<UserSession>;
   get(id: string): Promise<UserSession | null>;
-  update(id: string, updates: Partial<Pick<UserSession, 'status' | 'streamStatus'>>): Promise<UserSession | null>;
+  update(id: string, updates: SessionUpdates): Promise<UserSession | null>;
   heartbeat(id: string): Promise<boolean>;
   end(id: string): Promise<boolean>;
   getActiveSessions(): Promise<UserSession[]>;
@@ -95,12 +97,15 @@ class RedisSessionStore implements ISessionStore {
     }
   }
 
-  async update(id: string, updates: Partial<Pick<UserSession, 'status' | 'streamStatus'>>): Promise<UserSession | null> {
+  async update(id: string, updates: SessionUpdates): Promise<UserSession | null> {
     const session = await this.get(id);
     if (!session) return null;
 
     if (updates.status !== undefined) session.status = updates.status;
     if (updates.streamStatus !== undefined) session.streamStatus = updates.streamStatus;
+    if (updates.files !== undefined) session.files = updates.files;
+    if (updates.filesCount !== undefined) session.filesCount = updates.filesCount;
+    if (updates.requestedFiles !== undefined) session.requestedFiles = updates.requestedFiles;
     session.lastHeartbeat = Date.now();
 
     if (updates.status === 'ended') {
@@ -242,13 +247,16 @@ class FileSessionStore implements ISessionStore {
     return session;
   }
 
-  async update(id: string, updates: Partial<Pick<UserSession, 'status' | 'streamStatus'>>): Promise<UserSession | null> {
+  async update(id: string, updates: SessionUpdates): Promise<UserSession | null> {
     const map = this.readAll();
     const session = map.get(id);
     if (!session) return null;
 
     if (updates.status !== undefined) session.status = updates.status;
     if (updates.streamStatus !== undefined) session.streamStatus = updates.streamStatus;
+    if (updates.files !== undefined) session.files = updates.files;
+    if (updates.filesCount !== undefined) session.filesCount = updates.filesCount;
+    if (updates.requestedFiles !== undefined) session.requestedFiles = updates.requestedFiles;
     session.lastHeartbeat = Date.now();
 
     if (updates.status === 'ended') {
@@ -333,7 +341,7 @@ export class SessionStore {
     return this.getStore().get(id);
   }
 
-  static async update(id: string, updates: Partial<Pick<UserSession, 'status' | 'streamStatus'>>): Promise<UserSession | null> {
+  static async update(id: string, updates: SessionUpdates): Promise<UserSession | null> {
     return this.getStore().update(id, updates);
   }
 
